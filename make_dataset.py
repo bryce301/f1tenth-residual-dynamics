@@ -4,16 +4,18 @@
     source /opt/ros/jazzy/setup.bash
     source ~/f1tenth_ws/install/setup.bash
     source ~/f1tenth_ws/final_project/test/f1tenth_state_estimation/install/setup.bash
-    python3 make_dataset.py <session directory> data/<name>.npz
+    python3 make_dataset.py <session directory> data/<name>.npz [--segments 1 3]
 
 The raw sensors are re-filtered offline with the lidar-inertial-wheel EKF (no map, no output extrapolation),
 so the result does not depend on which estimator ran during recording. Output, 50 Hz at the IMU stamps:
   t, vx, vy, r   velocity of the rear-axle centre in body axes [m/s], yaw rate [rad/s]
   w              wheel peripheral speed from ERPM [m/s]
   current        motor current [A];  servo  commanded servo position (0..1)
-  clean          sample usable for training (moving, not lifted or carried, lidar present and matching)
+  clean          sample usable for training: moving, not lifted or carried, lidar present and matching,
+                 no collision within 1 s, and inside the selected recorder segments (all when none given)
 """
-import sys
+import argparse
+import json
 import numpy as np
 import rosbag2_py
 from rclpy.serialization import deserialize_message
@@ -21,6 +23,7 @@ from rosidl_runtime_py.utilities import get_message
 from f1tenth_state_estimation_impl.lidar_filter import LidarInertialFilter
 
 G, ERPM_PER_MPS = 9.80665, 4308.2
+COLLISION_MPS2 = 15.0      # hard drifting reaches 12-13 m/s^2 on this IMU; collisions peak at 25-100
 stamp = lambda h: h.stamp.sec + h.stamp.nanosec * 1e-9
 
 
@@ -48,7 +51,7 @@ def read(bag):
     return events, np.array(servo)
 
 
-def main(session, out):
+def main(session, out, segments):
     events, servo = read(session.rstrip('/') + '/bag')
     f = LidarInertialFilter(use_map=False)
     events = sorted((t + (f.c['scan_time_offset'] if k == 2 else 0), k, i, d) for t, k, i, d in events)
@@ -56,7 +59,8 @@ def main(session, out):
     for t, kind, _, d in events:
         if kind == 0:
             f.imu(t, *d[:3])
-            rows.append([t, f.x[3], f.x[4], f.u[0] - f.x[5], wheel, current, f.stat['icp_fail'], d[3], t - last_scan])
+            rows.append([t, f.x[3], f.x[4], f.u[0] - f.x[5], wheel, current, f.stat['icp_fail'], d[3], t - last_scan,
+                         np.hypot(d[1], d[2])])
         elif kind == 1:
             wheel, current = d
             f.wheel(t, wheel)
@@ -73,11 +77,21 @@ def main(session, out):
     lost = box((np.r_[0, np.diff(a[:, 6])] > 0) | (a[:, 8] > 0.3), 2 * k + 1)        # scan matching failed or no lidar
     pushed = (speed > 0.3) & (np.abs(w) < 0.05) & (np.abs(cur) < 0.5)               # moved by hand
     carried = box(np.convolve(pushed.astype(float), np.ones(k) / k, 'same') > 0.9, 2 * k + 1)
-    clean = ((np.abs(w) > 0.2) | (speed > 0.3)) & ~lifted & ~lost & ~carried
+    collision = box(a[:, 9] > COLLISION_MPS2, 2 * k + 1)
+    clean = ((np.abs(w) > 0.2) | (speed > 0.3)) & ~lifted & ~lost & ~carried & ~collision
+    if segments:
+        marks = {g['id']: (g['start_s'], g['end_s']) for g in json.load(open(session.rstrip('/') + '/session.json'))['segments']}
+        clean &= np.any([(t >= marks[i][0]) & (t <= marks[i][1]) for i in segments], axis=0)
     np.savez_compressed(out, t=t, vx=vx, vy=vy, r=a[:, 3], w=w, current=cur,
                         servo=np.interp(t, servo[:, 0], servo[:, 1]), clean=clean)
-    print(f'{out}: {len(t)} samples ({t[-1] - t[0]:.0f} s), clean moving {clean.sum() * dt:.0f} s, filter {f.stat}')
+    hits = np.flatnonzero(np.diff(np.r_[0, (a[:, 9] > COLLISION_MPS2).astype(int)]) > 0)
+    print(f'{out}: {len(t)} samples ({t[-1] - t[0]:.0f} s), clean moving {clean.sum() * dt:.0f} s, '
+          f'collisions at {np.round(t[hits] - t[0], 1).tolist()} s, filter {f.stat}')
 
 
 if __name__ == '__main__':
-    main(*sys.argv[1:3])
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('session'); parser.add_argument('out')
+    parser.add_argument('--segments', type=int, nargs='*', default=[], help='recorder segment ids to keep')
+    args = parser.parse_args()
+    main(args.session, args.out, args.segments)
