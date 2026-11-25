@@ -2,5 +2,3 @@ torch>=2.7    # RTX 50 series: install the CUDA 12.8+ build first, see 训练说
 numpy
 pyyaml
 matplotlib
-onnx
-onnxruntime

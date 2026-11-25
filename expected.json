@@ -1,0 +1,40 @@
+{
+ "data": {
+  "session_1124_154156.npz": "0bb260d1acbed9454e58e9610da9b1393fab3db0bfcedc916e236e63f50dbe0d",
+  "session_1124_154506.npz": "49d04df1b7f8f3c0a33f5d11160b40a5ac43cfc1416d7aa15500c7c8dbb1eb97",
+  "session_1124_154647.npz": "6858f3098fba962b65f0a80eac8afb7a83b828ec3a03cbe4b6c374f4593b9412",
+  "session_1124_200101.npz": "3d504cad2cf4c599b104e22d54284110cafa95a688bc05ac5c40f0c84eb380b7",
+  "session_1124_213328.npz": "f567f836bb87de210b360daca7fef1b05e6b870e733d637c28f898ecafc67cee",
+  "session_1125_160634.npz": "94de64ffca9fdcd577b28def58c835abc8e3db0fbb6efe498b353230e5d732f9",
+  "session_1125_161211.npz": "b08a7de0211dbb31ace88b1c61794b442eb024a440de82850c4157a2165ff1c0",
+  "session_1125_162246.npz": "c4f31ab825a864987cbc4f9aa2a615d36e935504233bc83300b57f72f32fdb11",
+  "session_1125_163242.npz": "20e06de5a91af3751fe6968cb2dd93d427f4533866d47a662a61aa4d0b3654b8"
+ },
+ "protected": {
+  "vehicle": {
+   "mass_kg": 3.8,
+   "cg_to_front_m": 0.159,
+   "cg_to_rear_m": 0.171,
+   "wheel_radius_m": 0.0524,
+   "servo_offset": 0.456
+  },
+  "data": {
+   "steering_delay_s": 0.08,
+   "min_speed_mps": 0.8,
+   "min_run_s": 1.0,
+   "validation_every": 4
+  },
+  "rollout": {
+   "step_s": 0.002,
+   "residual_hold_s": 0.1
+  }
+ },
+ "code": {
+  "core.py": "21643953d8eb3a9a0c21c7b24a7ddcdfc96fadeead61b58464e731df95d8b027",
+  "fit_classical.py": "9ec60ef387fb73e1f7621dcdd893d044ad26ea8cdb7674526750cd86bcc2b669",
+  "train_residual.py": "e40bc03b674892a9b2f3fcfc16b27453bf2d825b9499cb3dbc0476069041798f",
+  "evaluate.py": "4354a900115f8595c8f87a394765578a70bfe022481affb9a2f62aa78785106e",
+  "export_model.py": "de1d250d0f14b9c7a65bbd88f0a92ed6d2fff0e08a6fbd981e5d3510da41914d",
+  "verify.py": "215ac99d437d359fea470c51e09ea8fddd8986fcb6aaa1c0c497b911127b23b0"
+ }
+}

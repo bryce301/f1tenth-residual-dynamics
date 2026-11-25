@@ -1,9 +1,15 @@
 """Vehicle model, residual network, data windows and rollouts shared by the fitting / training scripts.
 
-Model contract (identical to xx_mppi's TensorRT interface, with motor current in place of wheel torque):
+Model interface (what the MPPI controller evaluates):
   input  [batch, 6]: yaw rate [rad/s], speed [m/s], sideslip [rad], wheel speed [m/s], steering [rad], current [A]
   output [batch, 4]: time derivatives of the first four inputs
-The body state refers to the centre of gravity. Port of xx_mppi dynamic_bicycle_fiala.hpp, locked-AWD branch.
+The body state refers to the centre of gravity. Current > 0 drives, current < 0 brakes (never reverses).
+
+Prediction, identical here and in the controller:
+  the classical model is integrated with explicit Euler steps of at most rollout.step_s;
+  the residual is evaluated once per control interval (rollout.residual_hold_s) from the state at its
+  start and the mean control over it, then added as a constant derivative for that interval.
+The classical model is a port of xx_mppi dynamic_bicycle_fiala.hpp, locked-AWD branch.
 """
 import json
 import math
@@ -57,6 +63,12 @@ class Fiala(nn.Module):
     def steering(self, servo):
         return (servo - self.servo_offset) / self.parameters_dict()['servo_gain']
 
+    def step_limit(self):
+        """Largest stable explicit integration step [s]: the wheel-speed state is the stiffest mode."""
+        p = self.parameters_dict()
+        stiffness = torch.maximum(p['front_cornering_stiffness_nprad'], p['rear_cornering_stiffness_nprad'])
+        return (p['driven_wheel_inertia_kgm2'] / (self.wheel_radius_m ** 2 * stiffness)).item()
+
     def forward(self, model_input):
         p = self.parameters_dict()
         r, speed_in, beta, w, delta, current = model_input.unbind(-1)
@@ -81,8 +93,10 @@ class Fiala(nn.Module):
         yaw_acceleration = (a * fxf * torch.sin(delta) + a * fyf * torch.cos(delta) - b * fyr) / p['yaw_inertia_kgm2']
         speed_rate = (cd * fxf - sd * fyf + torch.cos(beta) * fxr + torch.sin(beta) * fyr) / mass
         sideslip_rate = -r + (sd * fxf + cd * fyf - torch.sin(beta) * fxr + torch.cos(beta) * fyr) / (mass * speed)
-        # Motor current -> driveline torque at the wheels; the loss opposes rotation.
-        torque = p['wheel_torque_per_amp_nm'] * current - p['loss_torque_nm'] * torch.tanh(w / 0.2)
+        # Positive current drives. Negative current is a brake: like the driveline loss it opposes rotation
+        # and vanishes at standstill, so it cannot reverse the wheels.
+        gain, rolling = p['wheel_torque_per_amp_nm'], torch.tanh(w / 0.2)
+        torque = gain * current.clamp_min(0) + (gain * current.clamp_max(0) - p['loss_torque_nm']) * rolling
         wheel_rate = radius * (torque - radius * (fxf + fxr)) / p['driven_wheel_inertia_kgm2']
         return torch.stack([yaw_acceleration, speed_rate, sideslip_rate, wheel_rate], -1)
 
@@ -90,10 +104,11 @@ class Fiala(nn.Module):
 class Residual(nn.Module):
     """Bounded correction to the model derivative; fades to zero at low speed where there is no data."""
 
-    def __init__(self, config):
+    def __init__(self, config, hidden=None):
         super().__init__()
         c = config['residual']
-        sizes = [6, *c['hidden'], 4]
+        self.hidden = list(hidden or c['hidden'])
+        sizes = [6, *self.hidden, 4]
         layers = []
         for i in range(len(sizes) - 1):
             layers += [nn.Linear(sizes[i], sizes[i + 1]), nn.Tanh()]
@@ -112,22 +127,19 @@ class Residual(nn.Module):
         return self.limit * torch.tanh(self.net((model_input - self.mean) / self.std)) * gate.unsqueeze(-1)
 
 
-class FullModel(nn.Module):
-    def __init__(self, classical, residual=None):
-        super().__init__()
-        self.classical, self.residual = classical, residual
+def rollout(classical, residual, state, controls, dt, config):
+    """Predict along recorded controls. state [N,4], controls [N,H,2] (steering rad, current A) -> states [N,H,4].
 
-    def forward(self, model_input):
-        out = self.classical(model_input)
-        return out if self.residual is None else out + self.residual(model_input)
-
-
-def rollout(model, state, controls, dt, substeps):
-    """Euler rollout. state [N,4], controls [N,H,2] (steering rad, current A) -> states [N,H,4]."""
-    states = []
+    Each recorded sample is integrated in equal Euler steps no longer than rollout.step_s.
+    """
+    r = config['rollout']
+    substeps, hold = math.ceil(dt / r['step_s'] - 1e-9), round(r['residual_hold_s'] / dt)
+    states, correction = [], 0.0
     for k in range(controls.shape[1]):
+        if residual is not None and k % hold == 0:
+            correction = residual(torch.cat([state, controls[:, k:k + hold].mean(1)], -1))
         for _ in range(substeps):
-            state = state + dt / substeps * model(torch.cat([state, controls[:, k]], -1))
+            state = state + dt / substeps * (classical(torch.cat([state, controls[:, k]], -1)) + correction)
         states.append(state)
     return torch.stack(states, 1)
 
@@ -168,6 +180,15 @@ def split_runs(runs, config):
     return [r for i, r in enumerate(runs) if i not in val], [r for i, r in enumerate(runs) if i in val]
 
 
+def horizon_samples(config, dt, seconds=None):
+    """Rollout length in samples; must be a whole number of residual intervals."""
+    seconds = config['rollout']['horizon_s'] if seconds is None else seconds
+    n, hold = round(seconds / dt), round(config['rollout']['residual_hold_s'] / dt)
+    if n % hold:
+        raise SystemExit(f'rollout of {seconds} s is not a multiple of residual_hold_s')
+    return n
+
+
 def windows(runs, horizon, stride):
     """Initial state [N,4], controls [N,H,2] and following true states [N,H,4]."""
     x0, u, x = [], [], []
@@ -185,11 +206,10 @@ def to_model_controls(classical, controls):
     return torch.stack([classical.steering(controls[..., 0]), controls[..., 1]], -1)
 
 
-def rollout_error(model, classical, batch, dt, config):
+def rollout_error(classical, residual, batch, dt, config):
     """Scaled squared error of a rollout against the recorded states, and the raw error tensor."""
     x0, u, x = batch
-    pred = rollout(model, x0, to_model_controls(classical, u), dt, int(config['rollout']['substeps']))
-    error = pred - x
+    error = rollout(classical, residual, x0, to_model_controls(classical, u), dt, config) - x
     scale = torch.tensor(config['rollout']['error_scale'])
     return ((error / scale) ** 2).mean(), error
 

@@ -5,8 +5,8 @@
 """
 import argparse
 import torch
-from core import (HERE, Fiala, FullModel, describe, load_config, load_sessions, rmse, rollout_error, save_json,
-                  split_runs, windows)
+from core import (HERE, Fiala, describe, horizon_samples, load_config, load_sessions, rmse, rollout_error,
+                  save_json, split_runs, windows)
 
 
 def main():
@@ -17,26 +17,26 @@ def main():
     runs, dt = load_sessions(config, args.data)
     train, val = split_runs(runs, config)
     describe(train, dt, 'train'); describe(val, dt, 'held out')
-    horizon, stride = round(config['rollout']['horizon_s'] / dt), round(config['rollout']['stride_s'] / dt)
+    horizon, stride = horizon_samples(config, dt), round(config['rollout']['stride_s'] / dt)
     train_batch, val_batch = windows(train, horizon, stride), windows(val, horizon, stride)
 
-    classical = Fiala(config); model = FullModel(classical)
-    initial = {k: float(v) for k, v in classical.parameters_dict().items()}
+    classical = Fiala(config)
+    initial = {k: v.item() for k, v in classical.parameters_dict().items()}
     with torch.no_grad():
-        before = rmse(rollout_error(model, classical, val_batch, dt, config)[1])
+        before = rmse(rollout_error(classical, None, val_batch, dt, config)[1])
     optimizer = torch.optim.Adam(classical.parameters(), lr=config['classical']['learning_rate'])
     for epoch in range(config['classical']['epochs']):
         optimizer.zero_grad()
-        loss, _ = rollout_error(model, classical, train_batch, dt, config)
+        loss, _ = rollout_error(classical, None, train_batch, dt, config)
         loss.backward(); optimizer.step()
-        if epoch % 50 == 0 or epoch == config['classical']['epochs'] - 1:
+        if epoch % 25 == 0 or epoch == config['classical']['epochs'] - 1:
             with torch.no_grad():
-                val_loss, _ = rollout_error(model, classical, val_batch, dt, config)
+                val_loss, _ = rollout_error(classical, None, val_batch, dt, config)
             print(f'epoch {epoch:4d}  train {loss.item():.4f}  held out {val_loss.item():.4f}', flush=True)
 
-    fitted = {k: float(v) for k, v in classical.parameters_dict().items()}
+    fitted = {k: v.item() for k, v in classical.parameters_dict().items()}
     with torch.no_grad():
-        after = rmse(rollout_error(model, classical, val_batch, dt, config)[1])
+        after = rmse(rollout_error(classical, None, val_batch, dt, config)[1])
     print(f'\n{"parameter":34s} {"initial":>9s} {"fitted":>9s}   bounds')
     for name, (_, low, high) in config['identified'].items():
         edge = '  <-- at a bound: not determined by the data' if min(fitted[name] - low, high - fitted[name]) < 0.02 * (high - low) else ''
@@ -44,6 +44,8 @@ def main():
     print(f'\nheld-out {config["rollout"]["horizon_s"]} s rollout RMSE   yaw rate   speed  sideslip  wheel speed')
     print('  initial parameters          ' + '  '.join(f'{v:7.3f}' for v in before))
     print('  fitted parameters           ' + '  '.join(f'{v:7.3f}' for v in after))
+    print(f'stable integration step for the fitted parameters: {classical.step_limit() * 1e3:.2f} ms '
+          f'(used: {config["rollout"]["step_s"] * 1e3:.1f} ms)')
     (HERE / 'out').mkdir(exist_ok=True)
     save_json(HERE / 'out' / 'fitted.json', fitted)
     print('wrote out/fitted.json')
