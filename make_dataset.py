@@ -12,7 +12,11 @@ so the result does not depend on which estimator ran during recording. Output, 5
   w              wheel peripheral speed from ERPM [m/s]
   current        motor current [A];  servo  commanded servo position (0..1)
   clean          sample usable for training: moving, not lifted or carried, lidar present and matching,
-                 no collision within 1 s, and inside the selected recorder segments (all when none given)
+                 away from impacts and wall contact, and inside the selected recorder segments (all when none given)
+
+Impacts and wall contact (checked by hand against map position on the 2026-11-25 drift recordings):
+  impact   horizontal IMU acceleration above COLLISION_MPS2; samples from 0.5 s before to 1.5 s after are dropped
+  contact  a lidar return closer than CONTACT_M to the car outline; samples within 0.5 s are dropped
 """
 import argparse
 import json
@@ -23,8 +27,28 @@ from rosidl_runtime_py.utilities import get_message
 from f1tenth_state_estimation_impl.lidar_filter import LidarInertialFilter
 
 G, ERPM_PER_MPS = 9.80665, 4308.2
-COLLISION_MPS2 = 15.0      # hard drifting reaches 12-13 m/s^2 on this IMU; collisions peak at 25-100
+COLLISION_MPS2 = 15.0      # hard drifting reaches 12-13 m/s^2 on this IMU; impacts peak at 17-140
+CONTACT_M = 0.03
+OUTLINE = (-0.12, 0.45, -0.15, 0.15)   # rear, front, right, left of the body from the rear axle [m] (Traxxas Slash 4x4)
 stamp = lambda h: h.stamp.sec + h.stamp.nanosec * 1e-9
+
+
+def outline_gap(ranges, angle_min, increment, laser_x):
+    """Distance from the car outline to the closest valid lidar return."""
+    r = np.asarray(ranges, float)
+    a = angle_min + increment * np.arange(len(r))
+    ok = np.isfinite(r) & (r > 0.05)
+    x, y = r[ok] * np.cos(a[ok]) + laser_x, r[ok] * np.sin(a[ok])
+    rear, front, right, left = OUTLINE
+    return float(np.hypot(np.maximum(np.maximum(rear - x, x - front), 0), np.maximum(np.maximum(right - y, y - left), 0)).min(initial=np.inf))
+
+
+def around(mask, before, after):
+    """True within `before` samples before and `after` samples after any True sample."""
+    out = np.zeros_like(mask)
+    for i in np.flatnonzero(mask):
+        out[max(i - before, 0):i + after + 1] = True
+    return out
 
 
 def read(bag):
@@ -55,38 +79,40 @@ def main(session, out, segments):
     events, servo = read(session.rstrip('/') + '/bag')
     f = LidarInertialFilter(use_map=False)
     events = sorted((t + (f.c['scan_time_offset'] if k == 2 else 0), k, i, d) for t, k, i, d in events)
-    rows, wheel, current, last_scan = [], 0.0, 0.0, -np.inf
+    rows, wheel, current, last_scan, gap = [], 0.0, 0.0, -np.inf, np.inf
     for t, kind, _, d in events:
         if kind == 0:
             f.imu(t, *d[:3])
             rows.append([t, f.x[3], f.x[4], f.u[0] - f.x[5], wheel, current, f.stat['icp_fail'], d[3], t - last_scan,
-                         np.hypot(d[1], d[2])])
+                         np.hypot(d[1], d[2]), gap])
         elif kind == 1:
             wheel, current = d
             f.wheel(t, wheel)
         else:
             f.scan(t, *d)
-            last_scan = t
+            last_scan, gap = t, outline_gap(*d[:3], f.c['laser_x'])
     a = np.array(rows)
     t, vx, vy, w, cur = a[:, 0], a[:, 1], a[:, 2], a[:, 4], a[:, 5]
     dt = float(np.median(np.diff(t))); k = int(round(1 / dt))
-    box = lambda x, n: np.convolve(x.astype(float), np.ones(n), 'same') > 0
     az = np.convolve(a[:, 7], np.ones(k) / k, 'same')
     speed = np.hypot(vx, vy)
-    lifted = box(np.abs(az - np.median(a[:, 7])) > 0.08, 4 * k + 1)                 # tilted for a second: picked up
-    lost = box((np.r_[0, np.diff(a[:, 6])] > 0) | (a[:, 8] > 0.3), 2 * k + 1)        # scan matching failed or no lidar
+    lifted = around(np.abs(az - np.median(a[:, 7])) > 0.08, 2 * k, 2 * k)            # tilted for a second: picked up
+    lost = around((np.r_[0, np.diff(a[:, 6])] > 0) | (a[:, 8] > 0.3), k, k)          # scan matching failed or no lidar
     pushed = (speed > 0.3) & (np.abs(w) < 0.05) & (np.abs(cur) < 0.5)               # moved by hand
-    carried = box(np.convolve(pushed.astype(float), np.ones(k) / k, 'same') > 0.9, 2 * k + 1)
-    collision = box(a[:, 9] > COLLISION_MPS2, 2 * k + 1)
-    clean = ((np.abs(w) > 0.2) | (speed > 0.3)) & ~lifted & ~lost & ~carried & ~collision
+    carried = around(np.convolve(pushed.astype(float), np.ones(k) / k, 'same') > 0.9, k, k)
+    impact = a[:, 9] > COLLISION_MPS2
+    contact = a[:, 10] < CONTACT_M
+    clean = (((np.abs(w) > 0.2) | (speed > 0.3)) & ~lifted & ~lost & ~carried
+             & ~around(impact, k // 2, 3 * k // 2) & ~around(contact, k // 2, k // 2))
     if segments:
         marks = {g['id']: (g['start_s'], g['end_s']) for g in json.load(open(session.rstrip('/') + '/session.json'))['segments']}
         clean &= np.any([(t >= marks[i][0]) & (t <= marks[i][1]) for i in segments], axis=0)
     np.savez_compressed(out, t=t, vx=vx, vy=vy, r=a[:, 3], w=w, current=cur,
                         servo=np.interp(t, servo[:, 0], servo[:, 1]), clean=clean)
-    hits = np.flatnonzero(np.diff(np.r_[0, (a[:, 9] > COLLISION_MPS2).astype(int)]) > 0)
-    print(f'{out}: {len(t)} samples ({t[-1] - t[0]:.0f} s), clean moving {clean.sum() * dt:.0f} s, '
-          f'collisions at {np.round(t[hits] - t[0], 1).tolist()} s, filter {f.stat}')
+    starts = lambda m: t[np.flatnonzero(np.diff(np.r_[0, around(m, k // 2, k // 2).astype(int)]) > 0)] - t[0]
+    print(f'{out}: {len(t)} samples ({t[-1] - t[0]:.0f} s), clean moving {clean.sum() * dt:.0f} s; '
+          f'{len(starts(impact))} impacts at {np.round(starts(impact), 1).tolist()} s; '
+          f'{len(starts(contact))} wall-contact episodes ({contact.sum() * dt:.1f} s); filter {f.stat}')
 
 
 if __name__ == '__main__':
