@@ -1,0 +1,47 @@
+# Vehicle, data and training settings for the classical-model fit and the residual network.
+
+# Fixed quantities.
+vehicle:
+  mass_kg: 3.8                 # given
+  cg_to_front_m: 0.159         # estimated from the public F1TENTH model (front axle carries about 52 %)
+  cg_to_rear_m: 0.171
+  wheel_radius_m: 0.0524       # only gear ratio / radius = 225.6 1/m is known; splits torque and inertia units
+  servo_offset: 0.456          # servo position for straight driving, from data
+
+# Identified by fit_classical.py: [initial value, lower bound, upper bound].
+identified:
+  front_cornering_stiffness_nprad: [50.0, 10.0, 300.0]     # prior
+  rear_cornering_stiffness_nprad: [50.0, 10.0, 300.0]      # prior
+  front_friction_coefficient: [0.55, 0.3, 1.2]             # data: sliding 0.52, peak 0.58
+  rear_friction_coefficient: [0.55, 0.3, 1.2]
+  yaw_inertia_kgm2: [0.05, 0.02, 0.15]                     # prior
+  driven_wheel_inertia_kgm2: [0.0012, 0.0003, 0.006]       # prior
+  wheel_torque_per_amp_nm: [0.0223, 0.012, 0.035]          # data: 0.0987 m/s^2 per A
+  loss_torque_nm: [0.19, 0.0, 0.5]                         # data: about 8.5 A to hold speed
+  servo_gain: [-0.76, -1.2, -0.45]                         # servo = gain * steering + offset; uncertain
+
+data:
+  steering_delay_s: 0.08       # servo command -> yaw response, from data
+  min_speed_mps: 0.8           # the model floors speed at 1 m/s; slower samples are not used
+  min_run_s: 1.0               # shortest contiguous usable run
+  validation_every: 4          # every 4th run (by length) is held out completely
+
+rollout:
+  horizon_s: 0.5               # training rollout length
+  stride_s: 0.1                # spacing of rollout start points
+  substeps: 2                  # Euler substeps per recorded sample (0.02 s / 2 = 0.01 s)
+  error_scale: [0.5, 0.3, 0.1, 0.5]    # yaw rate, speed, sideslip, wheel speed: sizes that count as equal errors
+
+classical:
+  epochs: 400
+  learning_rate: 0.05
+
+residual:
+  hidden: [64, 64]
+  limit: [8.0, 4.0, 2.0, 12.0]         # largest correction per output: rad/s^2, m/s^2, rad/s, m/s^2
+  fade_speed_mps: [0.8, 1.5]           # correction is zero below the first speed and full above the second
+  epochs: 300
+  batch_size: 256
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  patience: 40                         # stop when the held-out error has not improved for this many epochs
