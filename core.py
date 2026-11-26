@@ -61,7 +61,7 @@ class Fiala(nn.Module):
         return dict(zip(self.names, values))
 
     def steering(self, servo):
-        return (servo - self.servo_offset) / self.parameters_dict()['servo_gain']
+        return (servo - self.servo_offset) / self.servo_gain
 
     def step_limit(self):
         """Largest stable explicit integration step [s]: the wheel-speed state is the stiffest mode."""
@@ -96,7 +96,10 @@ class Fiala(nn.Module):
         # Positive current drives. Negative current is a brake: like the driveline loss it opposes rotation
         # and vanishes at standstill, so it cannot reverse the wheels.
         gain, rolling = p['wheel_torque_per_amp_nm'], torch.tanh(w / 0.2)
-        torque = gain * current.clamp_min(0) + (gain * current.clamp_max(0) - p['loss_torque_nm']) * rolling
+        # Drive current fades out near the VESC speed limit (no recorded wheel speed exceeds it); braking does not.
+        top = self.max_wheel_speed_mps
+        fade = ((top - w) / 0.4).clamp(0, 1)
+        torque = gain * current.clamp_min(0) * fade + (gain * current.clamp_max(0) - p['loss_torque_nm']) * rolling
         wheel_rate = radius * (torque - radius * (fxf + fxr)) / p['driven_wheel_inertia_kgm2']
         return torch.stack([yaw_acceleration, speed_rate, sideslip_rate, wheel_rate], -1)
 
@@ -173,10 +176,12 @@ def load_sessions(config, files=None):
 
 
 def split_runs(runs, config):
-    """Whole runs go to validation (every n-th by duration order), never individual samples."""
-    n = int(config['data']['validation_every'])
-    order = sorted(range(len(runs)), key=lambda i: -len(runs[i]['state']))
-    val = {i for k, i in enumerate(order) if k % n == n - 1}
+    """Whole runs go to validation: every run of data.validation_files, and every n-th of the others by
+    duration order. Never individual samples."""
+    n, files = int(config['data']['validation_every']), set(config['data'].get('validation_files', []))
+    rest = [i for i in range(len(runs)) if runs[i]['file'] not in files]
+    order = sorted(rest, key=lambda i: -len(runs[i]['state']))
+    val = {i for k, i in enumerate(order) if k % n == n - 1} | {i for i in range(len(runs)) if runs[i]['file'] in files}
     return [r for i, r in enumerate(runs) if i not in val], [r for i, r in enumerate(runs) if i in val]
 
 

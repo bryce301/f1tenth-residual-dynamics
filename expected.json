@@ -2,13 +2,19 @@
  "data": {
   "session_1124_154156.npz": "0bb260d1acbed9454e58e9610da9b1393fab3db0bfcedc916e236e63f50dbe0d",
   "session_1124_154506.npz": "49d04df1b7f8f3c0a33f5d11160b40a5ac43cfc1416d7aa15500c7c8dbb1eb97",
-  "session_1124_154647.npz": "6858f3098fba962b65f0a80eac8afb7a83b828ec3a03cbe4b6c374f4593b9412",
+  "session_1124_154647.npz": "3363b8d855e41737675da8156437792fabbae79773598f111d328c5fd0d4f78d",
   "session_1124_200101.npz": "3d504cad2cf4c599b104e22d54284110cafa95a688bc05ac5c40f0c84eb380b7",
   "session_1124_213328.npz": "f567f836bb87de210b360daca7fef1b05e6b870e733d637c28f898ecafc67cee",
-  "session_1125_160634.npz": "94de64ffca9fdcd577b28def58c835abc8e3db0fbb6efe498b353230e5d732f9",
-  "session_1125_161211.npz": "b08a7de0211dbb31ace88b1c61794b442eb024a440de82850c4157a2165ff1c0",
-  "session_1125_162246.npz": "c4f31ab825a864987cbc4f9aa2a615d36e935504233bc83300b57f72f32fdb11",
-  "session_1125_163242.npz": "20e06de5a91af3751fe6968cb2dd93d427f4533866d47a662a61aa4d0b3654b8"
+  "session_1125_160634.npz": "2fb94f10d58da1b210e4e9eaed95d5f42acd60dcc8c0661ca64f6c48fc597bd9",
+  "session_1125_161211.npz": "4bab90b4acbe67112033838f5b168652bc5da6e488c39a67fe3639b6add0538e",
+  "session_1125_162246.npz": "c0b74fa9bb0524c5a54b6533da1a38aa20dc60109270a5acbd2605dce2af59b7",
+  "session_1125_163242.npz": "f89aa823efa23f60b22040b4a1f742af4df0ad282e2b9e20f5193b13b5b76044",
+  "session_1125_202435.npz": "0fe0694504048473015c4b47602cfb377a3caaf2a99a3cfc6e71215789177534",
+  "session_1125_205515.npz": "e0156016743d89a0d492f2870194a09ddec0068bb971ed3ce3ca4f81d6698646",
+  "session_1125_212235.npz": "9ea1da9420403104a46fc9a7a9aae6248eb42e1391ee8552dad55a9b0af0fe7e",
+  "session_1125_223940.npz": "03a254398aa54510be4ca5b162a0a460d076159916ad4de2643194e352af3819",
+  "session_1125_224604.npz": "1a456724f21e19e0451723601f811cccf6a37a0f5e2ede092ae6ba3386f2c799",
+  "session_1125_225227.npz": "e2ee247e172ab94df4468692e81a2ae193d648709c901be26679bf0607afe3b7"
  },
  "protected": {
   "vehicle": {
@@ -16,13 +22,18 @@
    "cg_to_front_m": 0.159,
    "cg_to_rear_m": 0.171,
    "wheel_radius_m": 0.0524,
-   "servo_offset": 0.456
+   "servo_gain": -0.952,
+   "servo_offset": 0.454,
+   "max_wheel_speed_mps": 5.4
   },
   "data": {
    "steering_delay_s": 0.08,
    "min_speed_mps": 0.8,
    "min_run_s": 1.0,
-   "validation_every": 4
+   "validation_every": 4,
+   "validation_files": [
+    "session_1125_225227.npz"
+   ]
   },
   "rollout": {
    "step_s": 0.002,
@@ -30,7 +41,7 @@
   }
  },
  "code": {
-  "core.py": "21643953d8eb3a9a0c21c7b24a7ddcdfc96fadeead61b58464e731df95d8b027",
+  "core.py": "2e435bc483997a452469b5946beb94bc969d9fd5f4891e5870537c0c471388a1",
   "fit_classical.py": "9ec60ef387fb73e1f7621dcdd893d044ad26ea8cdb7674526750cd86bcc2b669",
   "train_residual.py": "e40bc03b674892a9b2f3fcfc16b27453bf2d825b9499cb3dbc0476069041798f",
   "evaluate.py": "4354a900115f8595c8f87a394765578a70bfe022481affb9a2f62aa78785106e",

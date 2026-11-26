@@ -7,7 +7,11 @@ vehicle:
   cg_to_front_m: 0.159         # estimated from the public F1TENTH model (front axle carries about 52 %)
   cg_to_rear_m: 0.171
   wheel_radius_m: 0.0524       # only gear ratio / radius = 225.6 1/m is known; splits torque and inertia units
-  servo_offset: 0.456          # servo position for straight driving, from data
+  # servo = servo_gain * steering + servo_offset, measured from 2747 low-speed no-slip samples (kinematic
+  # steering atan(L r / v)); v2 fitted the gain (-0.687) and overstated the steering angle by 39 %.
+  servo_gain: -0.952
+  servo_offset: 0.454
+  max_wheel_speed_mps: 5.4     # VESC speed limit 23250 ERPM / 4308.2; drive current fades out over the last 0.4 m/s
 
 # Identified by fit_classical.py: [initial value, lower bound, upper bound].
 # The bounds on stiffness and inertia keep the wheel-speed mode integrable at rollout.step_s:
@@ -21,7 +25,6 @@ identified:
   driven_wheel_inertia_kgm2: [0.0012, 0.0008, 0.006]       # prior
   wheel_torque_per_amp_nm: [0.0223, 0.012, 0.035]          # data: 0.0987 m/s^2 per A
   loss_torque_nm: [0.19, 0.0, 0.5]                         # data: about 8.5 A to hold speed
-  servo_gain: [-0.76, -1.2, -0.45]                         # servo = gain * steering + offset; uncertain
 
 # PROTECTED.
 data:
@@ -29,6 +32,7 @@ data:
   min_speed_mps: 0.8           # the model floors speed at 1 m/s; slower samples are not used
   min_run_s: 1.0               # shortest contiguous usable run
   validation_every: 4          # every 4th run (by length) is held out completely
+  validation_files: [session_1125_225227.npz]   # and this whole recording: a car drift the training never sees
 
 rollout:
   step_s: 0.002                # PROTECTED. largest Euler step of the classical model
