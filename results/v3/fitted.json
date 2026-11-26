@@ -1,0 +1,10 @@
+{
+ "front_cornering_stiffness_nprad": 106.02295684814453,
+ "rear_cornering_stiffness_nprad": 100.66996002197266,
+ "front_friction_coefficient": 0.38258904218673706,
+ "rear_friction_coefficient": 0.4730653762817383,
+ "yaw_inertia_kgm2": 0.07978541404008865,
+ "driven_wheel_inertia_kgm2": 0.0012252982705831528,
+ "wheel_torque_per_amp_nm": 0.02668611891567707,
+ "loss_torque_nm": 0.23140046000480652
+}
